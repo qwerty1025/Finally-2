@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>牧場配送管理系統 Pro</title>
+    
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getDatabase, ref, set, onValue, get, child } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyB6D9vh6J2mdnjz2VXEVe99oi7oLF-irFo",
+            authDomain: "crm-ts-1225-001.firebaseapp.com",
+            databaseURL: "https://crm-ts-1225-001-default-rtdb.firebaseio.com",
+            projectId: "crm-ts-1225-001",
+            storageBucket: "crm-ts-1225-001.firebasestorage.app",
+            messagingSenderId: "925760221722",
+            appId: "1:925760221722:web:1aeda0b82f1f16b8dcd7a3"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        window.db = getDatabase(app);
+        window.dbRef = ref;
+        window.dbSet = set;
+    </script>
+
+    <style>
+        :root {
+            --primary: #007AFF; 
+            --success: #34C759;
+            --warning: #FF9500;
+            --danger: #FF3B30;
+            --bg: #F0F0F5;
+            --card-bg: #FFFFFF;
+            --text-main: #1C1C1E;
+            --text-sub: #8E8E93;
+            --border: #D1D1D6;
+            --radius: 8px; /* 更銳利的圓角 */
+        }
+
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--bg);
+            color: var(--text-main);
+            margin: 0;
+            padding-top: 135px; /* 增加 Header 高度以容納統計矩陣 */
+            font-size: 13px;
+        }
+
+        /* --- Header: 控制台與儀表板 --- */
+        header {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            background: rgba(255,255,255,0.98);
+            z-index: 100;
+            border-bottom: 1px solid var(--border);
+            padding: 8px 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+
+        .top-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        
+        .header-title { font-weight: 800; font-size: 1.1rem; color: var(--text-main); }
+        .date-badge { font-weight: normal; font-size: 0.8rem; color: var(--text-sub); background: #eee; padding: 2px 6px; border-radius: 4px; }
+
+        /* 統計矩陣 (Matrix) */
+        .stats-matrix {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr; /* 需求 | 分配 | 庫存 */
+            gap: 5px;
+            background: #F2F2F7;
+            padding: 5px;
+            border-radius: 8px;
+        }
+
+        .matrix-col {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 4px;
+            border-radius: 4px;
+        }
+        
+        .matrix-col.focus { background: #FFF; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+
+        .matrix-label { font-size: 0.7rem; color: var(--text-sub); margin-bottom: 2px; }
+        .matrix-val { font-weight: 700; font-size: 1.1rem; }
+        .matrix-detail { font-size: 0.65rem; color: #666; display: flex; gap: 3px; }
+
+        /* 庫存輸入框優化 */
+        #harvest-input {
+            width: 50px; text-align: center; border: 1px solid var(--border);
+            border-radius: 4px; font-weight: bold; color: var(--primary);
+            background: #fff;
+        }
+
+        /* --- 主內容區 --- */
+        .container {
+            padding: 10px;
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+
+        /* 高密度 Grid：手機版強制 2 欄，桌面 4 欄 */
+        .order-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr); 
+            gap: 8px;
+        }
+        @media (min-width: 768px) {
+            .order-grid { grid-template-columns: repeat(4, 1fr); }
+        }
+
+        /* --- 訂單卡片 --- */
+        .card {
+            background: var(--card-bg);
+            border-radius: var(--radius);
+            padding: 8px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            border-top: 3px solid var(--primary); /* 狀態色條改在上方節省寬度 */
+            position: relative;
+            transition: all 0.2s;
+        }
+
+        /* 零量或完成的卡片樣式 */
+        .card.is-zero {
+            opacity: 0.4;
+            filter: grayscale(100%);
+            order: 999; /* 沈底 */
+        }
+
+        /* 優先級標籤 (A/B/C) */
+        .priority-badge {
+            position: absolute;
+            top: 5px; right: 5px;
+            font-size: 0.7rem; font-weight: 900;
+            width: 18px; height: 18px;
+            display: flex; align-items: center; justify-content: center;
+            border-radius: 50%;
+            background: #eee; color: #666;
+            cursor: pointer;
+        }
+        .p-A { background: var(--danger); color: white; }
+        .p-B { background: var(--primary); color: white; }
+        .p-C { background: var(--success); color: white; }
+
+        .card-header { margin-bottom: 2px; padding-right: 20px; /* 避開 badge */ }
+        .customer-name { font-weight: 700; font-size: 0.95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block;}
+        
+        /* 數量顯示區 */
+        .qty-row {
+            display: flex;
+            justify-content: space-between;
+            background: #F9F9F9;
+            padding: 4px;
+            border-radius: 4px;
+        }
+        .qty-item { text-align: center; flex: 1; border-right: 1px solid #eee; }
+        .qty-item:last-child { border: none; }
+        .q-label { font-size: 0.6rem; color: #999; display: block; }
+        .q-val { font-weight: 700; font-size: 0.9rem; }
+        .q-zero { color: #ddd; }
+
+        /* 操作按鈕區 (2x2 Grid) */
+        .action-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4px;
+            margin-top: auto;
+        }
+        
+        .act-btn {
+            border: 1px solid var(--border);
+            background: white;
+            padding: 4px 0;
+            font-size: 0.75rem;
+            border-radius: 4px;
+            color: var(--text-main);
+            cursor: pointer;
+        }
+        
+        /* 狀態樣式對應 */
+        /* 0:預計 (藍) */
+        .card[data-status="0"] { border-top-color: var(--primary); }
+        .card[data-status="0"] .act-btn[data-act="0"] { background: var(--primary); color: white; border-color: var(--primary); }
+        
+        /* 1:延期 (橘) - 移出分配列表 */
+        .card[data-status="1"] { border-top-color: var(--warning); opacity: 0.8; }
+        .card[data-status="1"] .act-btn[data-act="1"] { background: var(--warning); color: white; border-color: var(--warning); }
+        
+        /* 2:減量 (灰/黑) */
+        .card[data-status="2"] { border-top-color: #333; }
+        .card[data-status="2"] .act-btn[data-act="2"] { background: #333; color: white; border-color: #333; }
+
+        /* 3:確認 (綠) */
+        .card[data-status="3"] { border-top-color: var(--success); background: #f0fff4; }
+        .card[data-status="3"] .act-btn[data-act="3"] { background: var(--success); color: white; border-color: var(--success); }
+
+        /* --- 漢堡選單 --- */
+        .menu-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; display: none; }
+        .menu-drawer { 
+            position: fixed; top: 0; left: -280px; width: 260px; height: 100%; 
+            background: white; z-index: 201; transition: 0.3s; padding: 20px; 
+            box-shadow: 2px 0 10px rgba(0,0,0,0.1); display: flex; flex-direction: column;
+        }
+        .menu-open .menu-overlay { display: block; }
+        .menu-open .menu-drawer { left: 0; }
+        
+        .btn-full { width: 100%; padding: 10px; background: var(--primary); color: white; border: none; border-radius: 6px; margin-bottom: 10px; font-size: 0.9rem;}
+        .btn-sec { background: white; color: var(--primary); border: 1px solid var(--primary); }
+
+    </style>
+</head>
+<body>
+
+<div id="side-menu" class="menu-drawer">
+    <h3 style="margin-top:0">管理功能</h3>
+    <input type="text" id="csv-url" class="btn-full" style="background:#fff; color:#333; border:1px solid #ccc;" value="https://docs.google.com/spreadsheets/d/e/2PACX-1vQF9dZUNtfJjbPIf4_3wvrJoVIv7WxGrXKEit9V0ou25BA9L1lMCEjqykH41p3f2MZc2b02nMLJXnrw/pubhtml?gid=1337688492&single=true">
+    <button class="btn-full" onclick="parseCSV()">1. 解析訂單 (CSV)</button>
+    <button class="btn-full btn-sec" onclick="saveToCloud()">2. 儲存至雲端 (Firebase)</button>
+    
+    <hr style="width:100%; border:0; border-top:1px solid #eee; margin: 15px 0;">
+    
+    <h4>規格說明 (Spec)</h4>
+    <div style="font-size:0.8rem; color:#666; line-height:1.5;">
+        <ul>
+            <li><b>A (紅色)</b>: VIP/合約戶，優先配送。</li>
+            <li><b>B (藍色)</b>: 一般戶，標準流程。</li>
+            <li><b>C (綠色)</b>: 散戶，庫存不足時優先延期。</li>
+            <li><b>延期</b>: 從「預計分配」中扣除數量。</li>
+            <li><b>減量</b>: 大瓶(950g) 改為 金中(500g)。</li>
+        </ul>
+    </div>
+</div>
+<div class="menu-overlay" onclick="toggleMenu()"></div>
+
+<header>
+    <div class="top-row">
+        <button onclick="toggleMenu()" style="border:none; background:none; font-size:1.2rem;">☰</button>
+        <div class="header-title">配送管理 <span id="current-date" class="date-badge">未設定</span></div>
+        <button onclick="saveToCloud()" style="border:none; background:none; color:var(--primary); font-weight:bold;">存檔</button>
+    </div>
+
+    <div class="stats-matrix">
+        <div class="matrix-col">
+            <span class="matrix-label">總訂單需求</span>
+            <span class="matrix-val" id="val-demand">0</span>
+            <div class="matrix-detail">
+                <span>大<span id="d-l">0</span></span>
+                <span>金<span id="d-g">0</span></span>
+                <span>中<span id="d-m">0</span></span>
+            </div>
+        </div>
+        
+        <div class="matrix-col focus">
+            <span class="matrix-label" style="color:var(--primary); font-weight:bold;">預計出貨量</span>
+            <span class="matrix-val" id="val-allocated" style="color:var(--primary);">0</span>
+            <div class="matrix-detail">
+                <span>大<span id="a-l">0</span></span>
+                <span>金<span id="a-g">0</span></span>
+                <span>中<span id="a-m">0</span></span>
+            </div>
+        </div>
+
+        <div class="matrix-col">
+            <span class="matrix-label">實際產量 (kg)</span>
+            <input type="number" id="harvest-input" value="0" oninput="calculateStats()">
+            <div class="matrix-detail" style="margin-top:2px;">
+                差異: <span id="val-diff" style="font-weight:bold;">0</span>
+            </div>
+        </div>
+    </div>
+</header>
+
+<div class="container">
+    <div id="loading" style="display:none; text-align:center; padding:20px;">資料處理中...</div>
+    <div id="card-list" class="order-grid">
+        <div style="grid-column: 1/-1; text-align: center; color: #999; margin-top: 50px;">
+            請點擊左上角選單載入資料
+        </div>
+    </div>
+</div>
+
+<div id="date-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:300; justify-content:center; align-items:center;">
+    <div style="background:white; padding:20px; border-radius:12px; width:80%;">
+        <h3>建立新配送單</h3>
+        <p>請選擇日期與循環範本</p>
+        <input type="date" id="setup-date" style="width:100%; padding:10px; margin-bottom:10px; border:1px solid #ddd; border-radius:6px;">
+        <button class="btn-full" onclick="confirmDate()">開始作業</button>
+    </div>
+</div>
+
+<script>
+    // ----------------------------------------
+    // 資料結構
+    // ----------------------------------------
+    let appData = {
+        date: '',
+        orders: [], // { uuid, name, L, G, M, status(0-3), priority(A/B/C) }
+        harvest: 0
+    };
+
+    // ----------------------------------------
+    // 核心邏輯：計算統計矩陣 (The Brain)
+    // ----------------------------------------
+    function calculateStats() {
+        // 1. Demand (原始訂單總量 - 不管狀態)
+        let d_L = 0, d_G = 0, d_M = 0;
+        
+        // 2. Allocated (實際要送的量 - 排除「延期」)
+        let a_L = 0, a_G = 0, a_M = 0;
+
+        appData.orders.forEach(o => {
+            // 原始計算 (假設 CSV 進來就是這些) - 這裡簡化，直接用當前數量倒推或是額外欄位儲存原始量
+            // 為求操作流暢，這裡 Demand 我們計算「非 0 的項目」
+            d_L += o.orgL || o.L; 
+            d_G += o.orgG || o.G;
+            d_M += o.orgM || o.M;
+
+            // 分配計算: 狀態 1 (延期) 不計入分配
+            if (o.status !== 1) {
+                a_L += o.L;
+                a_G += o.G;
+                a_M += o.M;
+            }
+        });
+
+        // 更新 UI: Demand
+        const weightL = 0.95, weightOther = 0.5;
+        const demandKg = (d_L * weightL + (d_G + d_M) * weightOther).toFixed(1);
+        document.getElementById('val-demand').textContent = demandKg;
+        document.getElementById('d-l').textContent = d_L;
+        document.getElementById('d-g').textContent = d_G;
+        document.getElementById('d-m').textContent = d_M;
+
+        // 更新 UI: Allocated
+        const allocKg = (a_L * weightL + (a_G + a_M) * weightOther).toFixed(1);
+        document.getElementById('val-allocated').textContent = allocKg;
+        document.getElementById('a-l').textContent = a_L;
+        document.getElementById('a-g').textContent = a_G;
+        document.getElementById('a-m').textContent = a_M;
+
+        // 更新 UI: Stock & Diff
+        const harvest = parseFloat(document.getElementById('harvest-input').value) || 0;
+        appData.harvest = harvest;
+        const diff = (harvest - allocKg).toFixed(1);
+        const diffEl = document.getElementById('val-diff');
+        
+        diffEl.textContent = (diff > 0 ? '+' : '') + diff;
+        diffEl.style.color = diff >= 0 ? 'var(--success)' : 'var(--danger)';
+    }
+
+    // ----------------------------------------
+    // 介面渲染 (The View)
+    // ----------------------------------------
+    function renderCards() {
+        const list = document.getElementById('card-list');
+        list.innerHTML = '';
+
+        // 排序邏輯: 
+        // 1. 優先級 A -> B -> C
+        // 2. 狀態: 預計(0) -> 減量(2) -> 確認(3) -> 延期(1) (延期放後面)
+        const sorted = [...appData.orders].sort((a, b) => {
+            if (a.status === 1 && b.status !== 1) return 1; // 延期沈底
+            if (a.status !== 1 && b.status === 1) return -1;
+            
+            // Priority Mapping
+            const pMap = { 'A': 0, 'B': 1, 'C': 2 };
+            return pMap[a.priority] - pMap[b.priority];
+        });
+
+        sorted.forEach((order, idx) => {
+            // 尋找原始陣列中的 index 以便更新
+            const realIndex = appData.orders.indexOf(order);
+            const totalQty = order.L + order.G + order.M;
+            const isZero = totalQty === 0 && order.status !== 1; // 數量為0且非延期
+
+            const div = document.createElement('div');
+            div.className = `card ${isZero ? 'is-zero' : ''}`;
+            div.dataset.status = order.status;
+
+            div.innerHTML = `
+                <div class="priority-badge p-${order.priority}" onclick="cyclePriority(${realIndex})">${order.priority}</div>
+                <div class="card-header">
+                    <div class="customer-name">${order.name}</div>
+                </div>
+                
+                <div class="qty-row">
+                    <div class="qty-item">
+                        <span class="q-label">大</span>
+                        <span class="q-val ${order.L===0?'q-zero':''}">${order.L}</span>
+                    </div>
+                    <div class="qty-item">
+                        <span class="q-label">金</span>
+                        <span class="q-val ${order.G===0?'q-zero':''}">${order.G}</span>
+                    </div>
+                    <div class="qty-item">
+                        <span class="q-label">中</span>
+                        <span class="q-val ${order.M===0?'q-zero':''}">${order.M}</span>
+                    </div>
+                </div>
+
+                <div class="action-grid">
+                    <button class="act-btn" data-act="0" onclick="setStatus(${realIndex}, 0)">預</button>
+                    <button class="act-btn" data-act="1" onclick="setStatus(${realIndex}, 1)">延</button>
+                    <button class="act-btn" data-act="2" onclick="actionReduce(${realIndex})">減</button>
+                    <button class="act-btn" data-act="3" onclick="setStatus(${realIndex}, 3)">確</button>
+                </div>
+            `;
+            list.appendChild(div);
+        });
+
+        calculateStats();
+    }
+
+    // ----------------------------------------
+    // 互動操作 (Actions)
+    // ----------------------------------------
+    window.setStatus = (idx, status) => {
+        appData.orders[idx].status = status;
+        
+        // 如果從延期回來，可能需要恢復數量 (這裡簡化為：不特別恢復，假設操作邏輯是單向或手動)
+        // 實際上 Spec 提到 "延期" 只是不計入分配，所以數量保持原樣即可
+        
+        renderCards();
+    };
+
+    window.actionReduce = (idx) => {
+        const o = appData.orders[idx];
+        if (o.L > 0) {
+            // 邏輯: 大(L) 轉 金中(G)
+            o.G += o.L;
+            o.L = 0;
+            o.status = 2; // 設為減量狀態
+            renderCards();
+        } else {
+            // 如果沒有大瓶，僅標記狀態
+            o.status = 2;
+            renderCards();
+        }
+    };
+
+    window.cyclePriority = (idx) => {
+        const map = { 'A': 'B', 'B': 'C', 'C': 'A' };
+        appData.orders[idx].priority = map[appData.orders[idx].priority];
+        renderCards();
+    };
+
+    window.toggleMenu = () => {
+        document.body.classList.toggle('menu-open');
+    }
+
+    // ----------------------------------------
+    // 資料解析 (Data Parsing)
+    // ----------------------------------------
+    window.parseCSV = async () => {
+        const url = document.getElementById('csv-url').value;
+        if(!url) return alert("請輸入網址");
+
+        // 顯示 Loading
+        document.getElementById('loading').style.display = 'block';
+        toggleMenu(); // 關閉選單
+
+        try {
+            let fetchUrl = url.replace('pubhtml', 'pub') + (url.includes('output=csv') ? '' : '&output=csv');
+            const res = await fetch(fetchUrl);
+            const text = await res.text();
+            
+            const rows = text.split('\n').filter(r => r.trim() !== '');
+            const newOrders = [];
+
+            // 假設 CSV: UUID, Name, L, G, M, Special
+            // 隨機指派 Priority 作為演示 (實務上應從 CSV 讀取)
+            for(let i=1; i<rows.length; i++) {
+                const c = rows[i].split(',').map(s => s.trim());
+                if(c.length < 2) continue;
+                
+                const L = parseInt(c[2]||0);
+                const G = parseInt(c[3]||0);
+                const M = parseInt(c[4]||0);
+
+                newOrders.push({
+                    uuid: c[0] || 'idx_'+i,
+                    name: c[1],
+                    L: L, orgL: L,
+                    G: G, orgG: G,
+                    M: M, orgM: M,
+                    status: 0,
+                    priority: Math.random() > 0.8 ? 'A' : (Math.random() > 0.5 ? 'C' : 'B') // 模擬分佈
+                });
+            }
+
+            appData.orders = newOrders;
+            
+            // 開啟日期選擇
+            document.getElementById('setup-date').valueAsDate = new Date();
+            document.getElementById('date-modal').style.display = 'flex';
+            document.getElementById('loading').style.display = 'none';
+
+        } catch(e) {
+            alert("解析錯誤: " + e);
+            document.getElementById('loading').style.display = 'none';
+        }
+    };
+
+    window.confirmDate = () => {
+        appData.date = document.getElementById('setup-date').value;
+        document.getElementById('current-date').textContent = appData.date;
+        document.getElementById('date-modal').style.display = 'none';
+        renderCards();
+    }
+
+    window.saveToCloud = () => {
+        if(!appData.date) return alert("請先設定日期");
+        if(!window.dbSet) return alert("Firebase 尚未連線");
+        
+        const path = `daily_dispatch/${appData.date}`;
+        window.dbSet(window.dbRef(window.db, path), {
+            ...appData,
+            updatedAt: new Date().toISOString()
+        }).then(() => alert("✅ 雲端儲存成功"));
+    }
+
+</script>
+
+</body>
+</html>
